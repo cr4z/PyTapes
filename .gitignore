@@ -1,0 +1,6 @@
+# OAuth credentials and tokens
+token.json
+credentials.json
+
+# Log files
+*.log
