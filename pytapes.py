@@ -6,6 +6,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s', filename='pytapes.log')
 
+blocked_channels = ["eletor"]
+skipped_keywords = ["phonk", "wallpaper", "instrumentals"]
+maximum = 25
+
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
 YOUTUBE_API_SERVICE_NAME = "youtube"
 YOUTUBE_API_VERSION = "v3"
@@ -23,16 +27,71 @@ def get_service():
     return build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, credentials=creds)
 
 
-def search(youtube, query, count):
+def search(youtube, query, count, blocked_channels=None, skipped_keywords=None):
+    if blocked_channels is None:
+        blocked_channels = []
+    if skipped_keywords is None:
+        skipped_keywords = []
+
     logging.info(f"Searching for '{query}' (max {count} results)")
+    # Fetch more results to account for filtering
+    fetch_count = min(count * 4, maximum * 2)
     resp = (
         youtube.search()
-        .list(part="id", q=query, type="video", order="relevance", maxResults=count)
+        .list(part="snippet", q=query, type="video", order="relevance", maxResults=fetch_count)
         .execute()
     )
-    results = [it["id"]["videoId"] for it in resp.get("items", [])]
-    logging.info(f"Found {len(results)} videos")
+
+    # Collect video IDs to check durations
+    video_ids = [it["id"]["videoId"] for it in resp.get("items", [])]
+
+    # Get video details including duration and category
+    videos_resp = youtube.videos().list(part="snippet,contentDetails", id=",".join(video_ids)).execute()
+
+    # Filter videos
+    results = []
+    for video in videos_resp.get("items", []):
+        video_id = video["id"]
+        title = video["snippet"].get("title", "").lower()
+        description = video["snippet"].get("description", "").lower()
+        channel_name = video["snippet"].get("channelTitle", "")
+        duration = video["contentDetails"].get("duration", "")
+
+        # Check if channel is blocked
+        if any(blocked in channel_name.lower() for blocked in blocked_channels):
+            logging.info(f"Skipping video {video_id} from blocked channel: {channel_name}")
+            continue
+
+        # Check for skipped keywords in title or description
+        if any(keyword.lower() in title or keyword.lower() in description for keyword in skipped_keywords):
+            logging.info(f"Skipping video {video_id} - contains blocked keyword: {title[:50]}")
+            continue
+
+        # Skip Shorts (duration <= 60 seconds)
+        # Parse ISO 8601 duration (PT#M#S format)
+        duration_seconds = parse_duration(duration)
+        if duration_seconds < 120:
+            logging.info(f"Skipping video {video_id} - too short ({duration_seconds}s): {title[:50]}")
+            continue
+
+        results.append(video_id)
+        if len(results) >= count:
+            break
+
+    logging.info(f"Found {len(results)} videos (after filtering)")
     return results
+
+
+def parse_duration(duration_str):
+    """Parse ISO 8601 duration to seconds (e.g., PT1M30S -> 90)"""
+    import re
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
+    if not match:
+        return 0
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    return hours * 3600 + minutes * 60 + seconds
 
 
 def list_items(youtube, playlist_id):
@@ -73,8 +132,8 @@ def insert(youtube, playlist_id, video_id):
 def update_playlist(youtube, playlist_id, drift_q, skate_q, n=25):
     logging.info("Starting playlist update")
     # grab top N of each
-    drift_ids = search(youtube, drift_q, n)
-    skate_ids = search(youtube, skate_q, n)
+    drift_ids = search(youtube, drift_q, n, blocked_channels, skipped_keywords)
+    skate_ids = search(youtube, skate_q, n, blocked_channels, skipped_keywords)
     # zip them
     merged = []
     for d, s in zip(drift_ids, skate_ids):
