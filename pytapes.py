@@ -4,7 +4,24 @@ from googleapiclient.errors import HttpError
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s', filename='pytapes.log')
+
+class ReverseFileHandler(logging.FileHandler):
+    def emit(self, record):
+        msg = self.format(record) + '\n'
+        if os.path.exists(self.baseFilename):
+            with open(self.baseFilename, 'r') as f:
+                existing = f.read()
+        else:
+            existing = ''
+        with open(self.baseFilename, 'w') as f:
+            f.write(msg + existing)
+
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+handler = ReverseFileHandler('pytapes.log')
+handler.setFormatter(logging.Formatter('[%(asctime)s]: %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+logger.addHandler(handler)
 
 blocked_channels = ["eletor"]
 skipped_keywords = ["phonk", "wallpaper", "instrumentals"]
