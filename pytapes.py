@@ -5,21 +5,9 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 
-class ReverseFileHandler(logging.FileHandler):
-    def emit(self, record):
-        msg = self.format(record) + '\n'
-        if os.path.exists(self.baseFilename):
-            with open(self.baseFilename, 'r') as f:
-                existing = f.read()
-        else:
-            existing = ''
-        with open(self.baseFilename, 'w') as f:
-            f.write(msg + existing)
-
-
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-handler = ReverseFileHandler('pytapes.log')
+handler = logging.FileHandler('pytapes.log', mode='a')
 handler.setFormatter(logging.Formatter('[%(asctime)s]: %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
 logger.addHandler(handler)
 
@@ -44,18 +32,17 @@ def get_service():
     return build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, credentials=creds)
 
 
-def search(youtube, query, count, blocked_channels=None, skipped_keywords=None):
+def search(youtube, query, blocked_channels=None, skipped_keywords=None):
     if blocked_channels is None:
         blocked_channels = []
     if skipped_keywords is None:
         skipped_keywords = []
 
-    logging.info(f"Searching for '{query}' (max {count} results)")
+    logging.info(f"Searching for '{query}' (max 50 results, per API defaults)")
     # Fetch more results to account for filtering
-    fetch_count = min(count * 4, maximum * 2)
     resp = (
         youtube.search()
-        .list(part="snippet", q=query, type="video", order="relevance", maxResults=fetch_count)
+        .list(part="snippet", q=query, type="video", order="relevance", maxResults=50)
         .execute()
     )
 
@@ -92,8 +79,6 @@ def search(youtube, query, count, blocked_channels=None, skipped_keywords=None):
             continue
 
         results.append(video_id)
-        if len(results) >= count:
-            break
 
     logging.info(f"Found {len(results)} videos (after filtering)")
     return results
@@ -146,11 +131,11 @@ def insert(youtube, playlist_id, video_id):
     ).execute()
 
 
-def update_playlist(youtube, playlist_id, drift_q, skate_q, n=25):
+def update_playlist(youtube, playlist_id, drift_q, skate_q, n=50):
     logging.info("Starting playlist update")
     # grab top N of each
-    drift_ids = search(youtube, drift_q, n, blocked_channels, skipped_keywords)
-    skate_ids = search(youtube, skate_q, n, blocked_channels, skipped_keywords)
+    drift_ids = search(youtube, drift_q, blocked_channels, skipped_keywords)
+    skate_ids = search(youtube, skate_q, blocked_channels, skipped_keywords)
     # zip them
     merged = []
     for d, s in zip(drift_ids, skate_ids):
